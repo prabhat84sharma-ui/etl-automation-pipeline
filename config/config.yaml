@@ -1,0 +1,275 @@
+# ==============================================================================
+# ETL Automation Pipeline - Multi-Environment Configuration
+# Author: Prabhat Sharma (prabhat84sharma-ui)
+# ==============================================================================
+
+# Global Active Environment: dev | staging | prod (Override with APP_ENV environment variable)
+environment: dev
+
+environments:
+  # ----------------------------------------------------------------------------
+  # Development Environment
+  # ----------------------------------------------------------------------------
+  dev:
+    app:
+      name: "ETL-Pipeline-Dev"
+      log_level: "DEBUG"
+      batch_size: 500
+      max_workers: 4
+
+    database:
+      type: "postgresql"
+      host: "${POSTGRES_HOST:-localhost}"
+      port: 5432
+      database: "${POSTGRES_DB:-dw_dev}"
+      username: "${POSTGRES_USER:-postgres}"
+      password: "${POSTGRES_PASSWORD:-postgres}"
+      schema: "public"
+      pool_size: 5
+      max_overflow: 10
+      pool_timeout: 30
+      echo: false
+
+    extractor:
+      api:
+        base_url: "https://api.mockcommerce.example.com/v1"
+        timeout_seconds: 30
+        rate_limit_per_minute: 120
+        retry:
+          max_attempts: 4
+          initial_backoff_sec: 1.5
+          multiplier: 2.0
+          max_backoff_sec: 20.0
+      storage:
+        raw_dir: "data/raw"
+        processed_dir: "data/processed"
+        archive_dir: "data/archive"
+        chunk_size: 5000
+
+    transformer:
+      base_currency: "USD"
+      rates:
+        USD: 1.0000
+        EUR: 1.0850
+        GBP: 1.2720
+        CAD: 0.7380
+        AUD: 0.6540
+        INR: 0.0120
+        JPY: 0.0067
+      business_rules:
+        max_discount_pct: 75.0
+        default_tax_rate: 0.0825
+        min_order_quantity: 1
+        clamp_negative_discounts: true
+
+    data_quality:
+      strict_mode: false
+      min_acceptable_score: 90.0
+      warning_threshold_score: 95.0
+      rules:
+        null_checks:
+          orders: ["order_id", "customer_id", "product_id", "order_timestamp", "total_amount"]
+          customers: ["customer_id", "email"]
+          products: ["product_id", "product_name", "unit_price"]
+        duplicate_checks:
+          orders: ["order_id"]
+          customers: ["customer_id"]
+          products: ["product_id"]
+        range_checks:
+          orders:
+            total_amount: { min: 0.01, max: 500000.0 }
+            quantity: { min: 1, max: 10000 }
+            discount_pct: { min: 0.0, max: 100.0 }
+          products:
+            unit_price: { min: 0.01, max: 100000.0 }
+
+    alerting:
+      slack:
+        enabled: true
+        webhook_url: "${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/MOCK/TOKEN/EXAMPLE}"
+        channel: "#dataops-dev-alerts"
+        notify_on_warning: true
+      email:
+        enabled: false
+        smtp_host: "smtp.gmail.com"
+        smtp_port: 587
+        sender: "alerts-dev@prabhatsharma.dev"
+        recipients: ["prabhat84sharma@gmail.com"]
+
+  # ----------------------------------------------------------------------------
+  # Staging Environment
+  # ----------------------------------------------------------------------------
+  staging:
+    app:
+      name: "ETL-Pipeline-Staging"
+      log_level: "INFO"
+      batch_size: 2000
+      max_workers: 8
+
+    database:
+      type: "postgresql"
+      host: "${POSTGRES_HOST:-staging-dw.internal}"
+      port: 5432
+      database: "${POSTGRES_DB:-dw_staging}"
+      username: "${POSTGRES_USER:-dw_svc_staging}"
+      password: "${POSTGRES_PASSWORD:-}"
+      schema: "public"
+      pool_size: 10
+      max_overflow: 20
+      pool_timeout: 45
+      echo: false
+
+    extractor:
+      api:
+        base_url: "https://staging-api.commercehub.com/v1"
+        timeout_seconds: 45
+        rate_limit_per_minute: 300
+        retry:
+          max_attempts: 5
+          initial_backoff_sec: 2.0
+          multiplier: 2.0
+          max_backoff_sec: 45.0
+      storage:
+        raw_dir: "data/raw"
+        processed_dir: "data/processed"
+        archive_dir: "data/archive"
+        chunk_size: 10000
+
+    transformer:
+      base_currency: "USD"
+      rates:
+        USD: 1.0000
+        EUR: 1.0850
+        GBP: 1.2720
+        CAD: 0.7380
+        AUD: 0.6540
+        INR: 0.0120
+        JPY: 0.0067
+      business_rules:
+        max_discount_pct: 70.0
+        default_tax_rate: 0.0825
+        min_order_quantity: 1
+        clamp_negative_discounts: true
+
+    data_quality:
+      strict_mode: true
+      min_acceptable_score: 95.0
+      warning_threshold_score: 98.0
+      rules:
+        null_checks:
+          orders: ["order_id", "customer_id", "product_id", "order_timestamp", "total_amount"]
+          customers: ["customer_id", "email"]
+          products: ["product_id", "product_name", "unit_price"]
+        duplicate_checks:
+          orders: ["order_id"]
+          customers: ["customer_id"]
+          products: ["product_id"]
+        range_checks:
+          orders:
+            total_amount: { min: 0.01, max: 1000000.0 }
+            quantity: { min: 1, max: 10000 }
+            discount_pct: { min: 0.0, max: 100.0 }
+          products:
+            unit_price: { min: 0.01, max: 100000.0 }
+
+    alerting:
+      slack:
+        enabled: true
+        webhook_url: "${SLACK_WEBHOOK_URL:-}"
+        channel: "#dataops-staging-alerts"
+        notify_on_warning: true
+      email:
+        enabled: true
+        smtp_host: "${SMTP_HOST:-smtp.internal}"
+        smtp_port: 587
+        sender: "alerts-staging@prabhatsharma.dev"
+        recipients: ["prabhat84sharma@gmail.com", "data-team@prabhatsharma.dev"]
+
+  # ----------------------------------------------------------------------------
+  # Production Environment
+  # ----------------------------------------------------------------------------
+  prod:
+    app:
+      name: "ETL-Pipeline-Production"
+      log_level: "INFO"
+      batch_size: 5000
+      max_workers: 16
+
+    database:
+      type: "postgresql"
+      host: "${POSTGRES_HOST:-prod-dw-primary.internal}"
+      port: 5432
+      database: "${POSTGRES_DB:-dw_prod}"
+      username: "${POSTGRES_USER:-dw_svc_prod}"
+      password: "${POSTGRES_PASSWORD:-}"
+      schema: "analytics"
+      pool_size: 20
+      max_overflow: 40
+      pool_timeout: 60
+      echo: false
+
+    extractor:
+      api:
+        base_url: "https://api.commercehub.com/v1"
+        timeout_seconds: 60
+        rate_limit_per_minute: 600
+        retry:
+          max_attempts: 5
+          initial_backoff_sec: 2.0
+          multiplier: 2.5
+          max_backoff_sec: 60.0
+      storage:
+        raw_dir: "/mnt/data/dw/raw"
+        processed_dir: "/mnt/data/dw/processed"
+        archive_dir: "/mnt/data/dw/archive"
+        chunk_size: 25000
+
+    transformer:
+      base_currency: "USD"
+      rates:
+        USD: 1.0000
+        EUR: 1.0850
+        GBP: 1.2720
+        CAD: 0.7380
+        AUD: 0.6540
+        INR: 0.0120
+        JPY: 0.0067
+      business_rules:
+        max_discount_pct: 70.0
+        default_tax_rate: 0.0825
+        min_order_quantity: 1
+        clamp_negative_discounts: true
+
+    data_quality:
+      strict_mode: true
+      min_acceptable_score: 98.0
+      warning_threshold_score: 99.5
+      rules:
+        null_checks:
+          orders: ["order_id", "customer_id", "product_id", "order_timestamp", "total_amount"]
+          customers: ["customer_id", "email"]
+          products: ["product_id", "product_name", "unit_price"]
+        duplicate_checks:
+          orders: ["order_id"]
+          customers: ["customer_id"]
+          products: ["product_id"]
+        range_checks:
+          orders:
+            total_amount: { min: 0.01, max: 2000000.0 }
+            quantity: { min: 1, max: 20000 }
+            discount_pct: { min: 0.0, max: 100.0 }
+          products:
+            unit_price: { min: 0.01, max: 200000.0 }
+
+    alerting:
+      slack:
+        enabled: true
+        webhook_url: "${SLACK_WEBHOOK_URL:-}"
+        channel: "#dataops-production-critical"
+        notify_on_warning: true
+      email:
+        enabled: true
+        smtp_host: "${SMTP_HOST:-smtp.sendgrid.net}"
+        smtp_port: 587
+        sender: "data-pipeline-prod@prabhatsharma.dev"
+        recipients: ["prabhat84sharma@gmail.com", "pagerduty-dataops@prabhatsharma.pagerduty.com"]

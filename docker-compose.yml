@@ -1,0 +1,131 @@
+# ==============================================================================
+# Docker Compose: Apache Airflow 2.8 + PostgreSQL 16 Data Warehouse
+# Project: etl-automation-pipeline
+# Author: Prabhat Sharma (prabhat84sharma-ui)
+# ==============================================================================
+
+version: '3.8'
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.3-python3.11
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/dw_dev
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 10
+    _PIP_ADDITIONAL_REQUIREMENTS: 'SQLAlchemy>=2.0.25 psycopg2-binary>=2.9.9 pandas>=2.2.0 pyyaml>=6.0.1 requests>=2.31.0 openpyxl>=3.1.2 tenacity>=8.2.3'
+    PYTHONPATH: /opt/airflow
+    APP_ENV: dev
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: 5432
+    POSTGRES_DB: dw_dev
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./src:/opt/airflow/src
+    - ./config:/opt/airflow/config
+    - ./sql:/opt/airflow/sql
+    - ./data:/opt/airflow/data
+    - ./reports:/opt/airflow/reports
+    - airflow-logs:/opt/airflow/logs
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - etl-network
+
+services:
+  # ============================================================================
+  # PostgreSQL 16: Analytical Data Warehouse & Airflow Metadata DB
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: etl-dw-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dw_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+      - ./sql/create_tables.sql:/docker-entrypoint-initdb.d/01_create_tables.sql:ro
+      - ./sql/analytical_views.sql:/docker-entrypoint-initdb.d/02_analytical_views.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dw_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - etl-network
+
+  # ============================================================================
+  # Airflow Init: Database Migration & Admin User Provisioning
+  # ============================================================================
+  airflow-init:
+    <<: *airflow-common
+    container_name: etl-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --firstname Prabhat \
+          --lastname Sharma \
+          --role Admin \
+          --email prabhat84sharma@gmail.com \
+          --password admin || true
+        echo "Airflow database initialized and admin user created."
+    restart: on-failure
+
+  # ============================================================================
+  # Airflow Webserver: Management UI (Port 8080)
+  # ============================================================================
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: etl-airflow-webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ============================================================================
+  # Airflow Scheduler: Task Execution & DAG Scheduling Engine
+  # ============================================================================
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: etl-airflow-scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-db-volume:
+  airflow-logs:
+
+networks:
+  etl-network:
+    driver: bridge
